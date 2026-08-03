@@ -729,6 +729,9 @@ portable:
 iobench$(EXE): iobench.c compat.h
 	$(CC) $(CFLAGS) iobench.c -o iobench$(EXE) $(LDFLAGS)
 
+tools/route_sim$(EXE): tools/route_sim.c tier.h
+	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
+
 tests/test_serve_sentinel$(EXE): tests/test_serve_sentinel.c compat.h
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
 
@@ -951,7 +954,7 @@ test-c: $(TEST_BINS)
 # itself (the test ALSO skips loudly if the library is somehow still absent,
 # e.g. when invoked via unittest directly — but a green `make test` must mean
 # the pin was actually checked).
-test-python: $(RANSLIB)
+test-python: $(RANSLIB) tools/route_sim$(EXE)
 	$(PYTHON) -m unittest discover -s tests -p 'test_*.py'
 
 test: test-c test-python

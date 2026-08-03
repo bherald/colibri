@@ -22,6 +22,43 @@ int main(void){
     int live[2]={0,1};
     if(!tier_pick_lfru(freq,last,100,5,live,2,&slot,&eid,&gain)) return fail("LFRU promotion");
     if(slot!=0||eid!=4) return fail("LFRU did not prefer recent ties");
+
+    TierAdapt adaptive; tier_adapt_init(&adaptive);
+    if(adaptive.k!=TIER_K0) return fail("adaptive initial k");
+    int8_t afreq[8]={0}; uint32_t routed_last[8]={0};
+    tier_admit(&afreq[0]);
+    if(afreq[0]!=1) return fail("fresh adaptive admission");
+    for(int i=0;i<40;i++) tier_touch(&adaptive,&afreq[0],1);
+    if(afreq[0]!=TIER_FMAX) return fail("adaptive frequency saturation");
+    if(adaptive.graduated!=1) return fail("adaptive graduation counted more than once");
+    routed_last[0]=7;
+    tier_evict(&adaptive,afreq,8,routed_last,0,4);
+    if(afreq[0]!=-TIER_FMAX) return fail("adaptive ghost memory");
+    tier_admit(&afreq[0]);
+    if(afreq[0]!=TIER_FMAX) return fail("adaptive ghost readmission");
+
+    TierAdapt turnover; tier_adapt_init(&turnover);
+    int8_t tfreq[5]={0,-3,-5,4,0}; uint32_t tlast[5]={0,10,12,2,0};
+    tier_evict(&turnover,tfreq,5,tlast,3,2);
+    if(tfreq[3]!=-4 || tfreq[1]!=0 || tfreq[2]!=-5)
+        return fail("adaptive ghost turnover");
+
+    TierAdapt decay; tier_adapt_init(&decay);
+    int8_t dfreq[5]={0,8,TIER_FMAX,-6,1}; uint32_t dlast[5]={0};
+    for(unsigned i=0;i<TIER_DECAY_EVERY;i++){
+        dfreq[0]=1; tier_evict(&decay,dfreq,5,dlast,0,5); dfreq[0]=0;
+    }
+    if(dfreq[1]!=7 || dfreq[2]!=TIER_FMAX-1 || dfreq[3]!=-6 || dfreq[4]!=1)
+        return fail("adaptive eviction-clock decay");
+
+    TierAdapt low; tier_adapt_init(&low);
+    int8_t lfreq[2]={0}; uint32_t llast[2]={0};
+    for(unsigned i=0;i<TIER_WIN_OPS;i++) tier_probe(&low,0);
+    for(unsigned i=0;i<TIER_ADAPT_EVERY;i++){
+        lfreq[0]=1; tier_evict(&low,lfreq,2,llast,0,2); lfreq[0]=0;
+        tier_maybe_adapt(&low);
+    }
+    if(low.k!=TIER_K0-1) return fail("adaptive k did not fall on zero reuse");
     puts("tier tests: ok");
     return 0;
 }
