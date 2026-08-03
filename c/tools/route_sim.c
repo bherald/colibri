@@ -364,6 +364,8 @@ int main(int argc, char **argv){
            TC.returned?(double)TC.ttr/(double)TC.returned:0.0);
     printf("clox: avg final k=%.2f  protected evictions=%.1f%% of %llu\n",
            nlay?ksum/nlay:0.0,pct(tprot,TC.evict),TC.evict);
+    printf("misses: lru=%llu clox=%llu reduction=%.2f%%\n",
+           TL.miss,TC.miss,TL.miss?100.0*((double)TL.miss-(double)TC.miss)/(double)TL.miss:0.0);
     printf("sub%% = evictions whose victim returned before another resident (worse than Belady's pick)\n");
     printf("ret%%/ttr = victims re-requested at all / mean probes until they returned\n");
     free(pinmap);
