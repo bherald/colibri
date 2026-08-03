@@ -17,7 +17,8 @@
  *   ret%     victims later re-requested at all (eviction regret rate)
  *   ttr      mean probes until an evicted victim returns (higher = better)
  *
- * Usage: route_sim -c CAP [-p NPIN | --pin-usage FILE --pin-count N] trace
+ * Usage: route_sim -c CAP [-p NPIN | --pin-usage FILE --pin-count N]
+ *                  [--min-call N] [--max-call N] trace
  *   -c  streaming-cache slots per layer (mirror the runtime's ecap)
  *   -p  pin the N most-requested experts per layer (approximates VRAM pins:
  *       kept in the 64-block layout, never enter the streaming cache)
@@ -29,6 +30,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 #include "../tier.h"
 
 #define INF 0xffffffffu
@@ -200,17 +202,21 @@ static double xopt(const PS *p, const PS *o){ return o->miss? 100.0*((double)p->
 
 int main(int argc, char **argv){
     int cap=0, npin=0, pin_count=0, gonce=0;
+    long min_call=LONG_MIN, max_call=LONG_MAX;
     const char *path=NULL, *pin_usage=NULL;
     for(int i=1;i<argc;i++){
         if(!strcmp(argv[i],"-c")&&i+1<argc) cap=atoi(argv[++i]);
         else if(!strcmp(argv[i],"-p")&&i+1<argc) npin=atoi(argv[++i]);
         else if(!strcmp(argv[i],"--pin-usage")&&i+1<argc) pin_usage=argv[++i];
         else if(!strcmp(argv[i],"--pin-count")&&i+1<argc) pin_count=atoi(argv[++i]);
+        else if(!strcmp(argv[i],"--min-call")&&i+1<argc) min_call=strtol(argv[++i],NULL,10);
+        else if(!strcmp(argv[i],"--max-call")&&i+1<argc) max_call=strtol(argv[++i],NULL,10);
         else if(!strcmp(argv[i],"-g")) gonce=1;    /* clox: graduate once per residency */
         else path=argv[i];
     }
     if(!path||cap<1||npin<0||pin_count<0||(npin&&pin_usage)||((pin_usage!=NULL)!=(pin_count>0))){
-        fprintf(stderr,"usage: route_sim -c CAP [-p NPIN | --pin-usage FILE --pin-count N] trace\n");
+        fprintf(stderr,"usage: route_sim -c CAP [-p NPIN | --pin-usage FILE --pin-count N] "
+                       "[--min-call N] [--max-call N] trace\n");
         return 2;
     }
     FILE *f=fopen(path,"r");
@@ -225,6 +231,7 @@ int main(int argc, char **argv){
         long call=strtol(p,&q,10); if(q==p) continue; p=q;
         strtol(p,&q,10); p=q;                        /* pos: unused */
         long layer=strtol(p,&q,10); p=q;
+        if(call<min_call || call>max_call) continue;
         if(layer<0||layer>=MAXLAYERS) continue;
         if(layer>maxlayer) maxlayer=(int)layer;
         if(call!=lastcall||layer!=lastlayer){ lt_call(&lt[layer]); lastcall=call; lastlayer=(int)layer; }
