@@ -18,14 +18,16 @@
  *   ttr      mean probes until an evicted victim returns (higher = better)
  *
  * Usage: route_sim -c CAP [-p NPIN | --pin-usage FILE --pin-count N]
- *                  [--min-call N] [--max-call N] trace
+ *                  [--min-call N] [--max-call N] [--fixed-k N] trace
  *   -c  streaming-cache slots per layer (mirror the runtime's ecap)
  *   -p  pin the N most-requested experts per layer (approximates VRAM pins:
  *       kept in the 64-block layout, never enter the streaming cache)
  *   --pin-usage/--pin-count reproduce the runtime's global history ranking.
  *       This avoids selecting pins from the evaluation trace (future leakage).
  * The clox column replays tier.h verbatim, including its built-in live-freq
- * decay; to sweep the decay cadence, rebuild with -DTIER_DECAY_EVERY=n.
+ * decay. --fixed-k freezes the protected-frequency threshold for a controlled
+ * comparison with the adaptive policy; to sweep the decay cadence, rebuild
+ * with -DTIER_DECAY_EVERY=n.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -106,7 +108,8 @@ static void score_evict(PS *s, int vict, uint32_t t, const int *seid, int nn,
  * turnover); clox==0 runs plain LRU on the same block/promo structure. */
 static void run_online(const LT *t, const uint32_t *pr, const size_t *pcs, int nexp, int cap,
                        const uint32_t *occ, const uint32_t *off, uint32_t *cur,
-                       int clox, PS *s, TierAdapt *ad_out, unsigned long long *prot_evict){
+                       int clox, int fixed_k, PS *s, TierAdapt *ad_out,
+                       unsigned long long *prot_evict){
     int *seid=xrealloc(NULL,cap*sizeof *seid);
     uint64_t *used=xrealloc(NULL,cap*sizeof *used);
     int *rs=xrealloc(NULL,nexp*sizeof *rs);            /* expert -> slot | -1 */
@@ -115,6 +118,7 @@ static void run_online(const LT *t, const uint32_t *pr, const size_t *pcs, int n
     uint32_t *last=calloc(nexp,sizeof *last);
     for(int e=0;e<nexp;e++) rs[e]=-1;
     TierAdapt ad; tier_adapt_init(&ad);
+    if(fixed_k>0) ad.k=(int8_t)fixed_k;
     memset(s,0,sizeof *s);
     int nn=0; uint64_t eclock=0; uint32_t aclock=0, tix=0;
 
@@ -158,7 +162,7 @@ static void run_online(const LT *t, const uint32_t *pr, const size_t *pcs, int n
                     if(clox){
                         if(prot_evict && freq[vict]>ad.k) (*prot_evict)++;
                         tier_evict(&ad,freq,nexp,last,vict,cap);
-                        tier_maybe_adapt(&ad);
+                        if(!fixed_k) tier_maybe_adapt(&ad);
                     }
                     rs[vict]=-1;
                 }
@@ -201,7 +205,7 @@ static double pct(unsigned long long a, unsigned long long b){ return b? 100.0*(
 static double xopt(const PS *p, const PS *o){ return o->miss? 100.0*((double)p->miss-(double)o->miss)/(double)o->miss : 0.0; }
 
 int main(int argc, char **argv){
-    int cap=0, npin=0, pin_count=0, gonce=0;
+    int cap=0, npin=0, pin_count=0, gonce=0, fixed_k=0, fixed_k_set=0;
     long min_call=LONG_MIN, max_call=LONG_MAX;
     const char *path=NULL, *pin_usage=NULL;
     for(int i=1;i<argc;i++){
@@ -211,12 +215,14 @@ int main(int argc, char **argv){
         else if(!strcmp(argv[i],"--pin-count")&&i+1<argc) pin_count=atoi(argv[++i]);
         else if(!strcmp(argv[i],"--min-call")&&i+1<argc) min_call=strtol(argv[++i],NULL,10);
         else if(!strcmp(argv[i],"--max-call")&&i+1<argc) max_call=strtol(argv[++i],NULL,10);
+        else if(!strcmp(argv[i],"--fixed-k")&&i+1<argc){ fixed_k=atoi(argv[++i]); fixed_k_set=1; }
         else if(!strcmp(argv[i],"-g")) gonce=1;    /* clox: graduate once per residency */
         else path=argv[i];
     }
-    if(!path||cap<1||npin<0||pin_count<0||(npin&&pin_usage)||((pin_usage!=NULL)!=(pin_count>0))){
+    if(!path||cap<1||npin<0||pin_count<0||(fixed_k_set&&(fixed_k<1||fixed_k>=TIER_FMAX))||
+       (npin&&pin_usage)||((pin_usage!=NULL)!=(pin_count>0))){
         fprintf(stderr,"usage: route_sim -c CAP [-p NPIN | --pin-usage FILE --pin-count N] "
-                       "[--min-call N] [--max-call N] trace\n");
+                       "[--min-call N] [--max-call N] [--fixed-k N] trace\n");
         return 2;
     }
     FILE *f=fopen(path,"r");
@@ -280,11 +286,13 @@ int main(int argc, char **argv){
     }
 
     if(pinmap)
-        printf("route_sim: cap=%d exact_global_pins=%d experts=%d decay_every=%u\n",
-               cap,selected_pins,nexp,(unsigned)TIER_DECAY_EVERY);
+        printf("route_sim: cap=%d exact_global_pins=%d experts=%d decay_every=%u %s=%d\n",
+               cap,selected_pins,nexp,(unsigned)TIER_DECAY_EVERY,
+               fixed_k_set?"fixed_k":"initial_k",fixed_k_set?fixed_k:TIER_K0);
     else
-        printf("route_sim: cap=%d pins/layer=%d experts=%d decay_every=%u\n",
-               cap,npin,nexp,(unsigned)TIER_DECAY_EVERY);
+        printf("route_sim: cap=%d pins/layer=%d experts=%d decay_every=%u %s=%d\n",
+               cap,npin,nexp,(unsigned)TIER_DECAY_EVERY,
+               fixed_k_set?"fixed_k":"initial_k",fixed_k_set?fixed_k:TIER_K0);
     printf("%5s %10s %6s | %6s %6s %7s %6s %7s | %6s %6s %7s %6s %7s\n",
            "layer","probes","opt%","lru%","x-opt%","sub%","ret%","ttr",
            "clox%","x-opt%","sub%","ret%","ttr");
@@ -339,8 +347,9 @@ int main(int argc, char **argv){
 
         PS o,lr,cx; TierAdapt ad; unsigned long long prot=0;
         memcpy(cur,off,nexp*sizeof *cur); run_opt(pr,np,nexp,cap,occ,off,cur,&o);
-        memcpy(cur,off,nexp*sizeof *cur); run_online(t,pr,pcs,nexp,cap,occ,off,cur,0,&lr,NULL,NULL);
-        memcpy(cur,off,nexp*sizeof *cur); run_online(t,pr,pcs,nexp,cap,occ,off,cur,gonce?2:1,&cx,&ad,&prot);
+        memcpy(cur,off,nexp*sizeof *cur); run_online(t,pr,pcs,nexp,cap,occ,off,cur,0,0,&lr,NULL,NULL);
+        memcpy(cur,off,nexp*sizeof *cur); run_online(t,pr,pcs,nexp,cap,occ,off,cur,gonce?2:1,
+                                                     fixed_k_set?fixed_k:0,&cx,&ad,&prot);
 
         unsigned long long probes=o.hits+o.miss;
         printf("%5d %10llu %6.1f | %6.1f %6.1f %6.1f%% %5.1f%% %7.0f | %6.1f %6.1f %6.1f%% %5.1f%% %7.0f\n",

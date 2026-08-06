@@ -6,10 +6,11 @@ from pathlib import Path
 
 
 class RouteSimulatorTest(unittest.TestCase):
-    def run_sim(self, trace: Path, usage: Path) -> str:
+    def run_sim(self, trace: Path, usage: Path, *extra: str) -> str:
         exe = Path("tools") / ("route_sim.exe" if os.name == "nt" else "route_sim")
         result = subprocess.run(
-            [str(exe), "-c", "1", "--pin-usage", str(usage), "--pin-count", "1", str(trace)],
+            [str(exe), "-c", "1", "--pin-usage", str(usage), "--pin-count", "1",
+             *extra, str(trace)],
             check=True,
             capture_output=True,
             text=True,
@@ -42,6 +43,24 @@ class RouteSimulatorTest(unittest.TestCase):
             hot_usage.write_text("-1 0 3\n0 0 100\n0 2 10\n", encoding="utf-8")
             hot = self.run_sim(trace, hot_usage)
             self.assertEqual(self.probes(hot), 3)
+
+    def test_fixed_k_two_is_reported_and_does_not_adapt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            trace = root / "route.trace"
+            trace.write_text(
+                "0 0 0 0:0.5 1:0.5\n"
+                "1 0 0 1:0.5 2:0.5\n"
+                "2 0 0 2:0.5 0:0.5\n",
+                encoding="utf-8",
+            )
+            usage = root / "usage"
+            usage.write_text("-1 0 3\n0 2 100\n", encoding="utf-8")
+
+            output = self.run_sim(trace, usage, "--fixed-k", "2")
+
+            self.assertIn("fixed_k=2", output)
+            self.assertIn("clox: avg final k=2.00", output)
 
 
 if __name__ == "__main__":
